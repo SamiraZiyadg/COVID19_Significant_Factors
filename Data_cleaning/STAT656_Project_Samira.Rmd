@@ -1,0 +1,391 @@
+---
+title: "STAT656_Project"
+author: "Moein-Samira-Homa"
+date: "10/8/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(dplyr)
+library(ggplot2)
+library(caret)
+library(statsr)
+library(data.table)
+library(stats)
+library(openintro)
+library(pivottabler)
+library(reshape)
+```
+
+#Read the Data
+We first read the data including covid data, ICU data, demographic data, geographic data, and health data.
+
+```{r load data}
+rm(list = ls())
+covid_data = fread("/Volumes/GoogleDrive/Shared drives/STAT656_Project/COVID_by_County.csv")
+icu_data = fread("/Volumes/GoogleDrive/Shared drives/STAT656_Project/ICU_bed_by_county_modified.csv")
+tot_pop_data = fread("/Volumes/GoogleDrive/Shared drives/STAT656_Project/POP_Data_Race_Modified.csv")
+health_data = fread("/Volumes/GoogleDrive/Shared drives/STAT656_Project/us_county_sociohealth_data.csv")
+weather_data = fread("/Volumes/GoogleDrive/Shared drives/STAT656_Project/Updated_weather_data_13Nov2020.csv")
+covid_by_month= fread("/Volumes/GoogleDrive/Shared drives/STAT656_Project/us-counties.csv")
+```
+
+#Extract and Clean Covid Data
+
+The Covid data consists of the cumulative data over time. As a result, the max value of each county and state is exctracted to be considered as the updated positive cases and death cases. Some data is removed due to the lack of data for other datasets or since they do not belong to the USA.
+
+```{r filter_covid}
+covid_by_county <- covid_data %>% group_by(County, State) %>% filter(State != "Puerto Rico" & State != "Northern Mariana Islands" & State != "Virgin Islands" & County != "Unknown" & County != "Joplin") %>% summarise(Positive_Cases = max(Cases), Deaths = max(Deaths),.groups='drop') %>% na.omit
+```
+
+# Clean ICU Data
+
+All the missing values for ICU data in "Number of Staffed Beds" and "Number of ICU Beds" are set 0 because they belong to the hospitals which do not have ICUs. Since each county have multiple hospitals, those are aggregated and added together.
+
+```{r}
+
+icu_data$NUM_STAFFED_BEDS[is.na(icu_data$NUM_STAFFED_BEDS)] = 0
+
+icu_data$NUM_ICU_BEDS[is.na(icu_data$NUM_ICU_BEDS)] = 0
+
+icu_beds_by_county <- icu_data %>% select(State, County, NUM_STAFFED_BEDS, NUM_ICU_BEDS) %>% group_by(State, County) %>% summarise_each(funs(sum))
+
+```
+
+# Clean Weather Data
+
+We first calculate the number of and the percentage of missing values. Since the maximum percentage is nearly 17%, we decide to remove all rows with NAN values and then using groupby function to extract the values for each month.
+
+#Plot Missing Data
+
+```{r plot_missing_values}
+ggplot_missing <- function(x){
+  require(reshape2)
+  require(ggplot2)
+  x %>% 
+    is.na %>%
+    melt %>%
+    ggplot(data = .,
+           aes(x = Var2,
+               y = Var1)) +
+    geom_raster(aes(fill = value)) +
+    scale_fill_grey(name = "",
+                    labels = c("Present","Missing")) +
+    theme_minimal() + 
+    theme(axis.text.x  = element_text(angle=45, vjust=0.5)) + 
+    labs(x = "Variables in Dataset",
+         y = "Rows / observations")
+}
+
+ggplot_missing(weather_data)
+
+#Calculate the NAN counts and NAN percentage for each column
+
+colMeans(is.na(weather_data))
+
+```
+
+Before aggegating the data, we remove nan values for each column. Since all the 
+
+```{r Aggregate weather data for each month}
+
+weather = weather_data %>% group_by(County, State, month) %>% summarise(min_temp = mean(min_temp),max_temp = mean(max_temp), mean_temp = mean(mean_temp),wind_speed = mean(wind_speed), precipitation = mean(precipitation),station_pressure = mean(station_pressure),dewpoint = mean(dewpoint),.groups='drop')
+
+min_temp = weather_data %>% group_by(County, State, month) %>% summarise(min_temp = mean(min_temp,na.rm = TRUE),.groups='drop')
+max_temp = weather_data %>% group_by(County, State, month) %>% summarise(max_temp = mean(max_temp,na.rm = TRUE),.groups='drop')
+mean_temp = weather_data %>% group_by(County, State, month) %>% summarise(mean_temp = mean(mean_temp,na.rm = TRUE),.groups='drop')
+wind_speed = weather_data %>% group_by(County, State, month) %>% summarise(wind_speed = mean(wind_speed,na.rm = TRUE),.groups='drop')
+precipitation = weather_data %>% group_by(County, State, month) %>% summarise(precipitation = mean(precipitation,na.rm = TRUE),.groups='drop')
+station_pressure = weather_data %>% group_by(County, State, month) %>% summarise(station_pressure = mean(station_pressure,na.rm = TRUE),.groups='drop')
+dewpoint = weather_data %>% group_by(County, State, month) %>% summarise(dewpoint = mean(dewpoint,na.rm = TRUE),.groups='drop')
+
+pivot_min_temp = dcast(min_temp, County + State ~ month, fun.aggregate = sum, value.var='min_temp')
+pivot_max_temp = dcast(max_temp, County + State ~ month, fun.aggregate = sum, value.var='max_temp')
+pivot_mean_temp = dcast(mean_temp, County + State ~ month, fun.aggregate = sum, value.var='mean_temp')
+pivot_wind_speed = dcast(wind_speed, County + State ~ month, fun.aggregate = sum, value.var='wind_speed')
+pivot_precipitation = dcast(precipitation, County + State ~ month, fun.aggregate = sum, value.var='precipitation')
+pivot_station_pressure = dcast(station_pressure, County + State ~ month, fun.aggregate = sum, value.var='station_pressure')
+pivot_dewpoint = dcast(dewpoint, County + State ~ month, fun.aggregate = sum, value.var='dewpoint')
+
+colnames(pivot_min_temp)[3:13] <- paste("min_temp_month", colnames(pivot_min_temp)[3:13], sep = "_")
+colnames(pivot_max_temp)[3:13] <- paste("max_temp_month", colnames(pivot_max_temp)[3:13], sep = "_")
+colnames(pivot_mean_temp)[3:13] <- paste("mean_temp_month", colnames(pivot_mean_temp)[3:13], sep = "_")
+colnames(pivot_wind_speed)[3:13] <- paste("wind_speed_month", colnames(pivot_wind_speed)[3:13], sep = "_")
+colnames(pivot_precipitation)[3:13] <- paste("precipitation_month", colnames(pivot_precipitation)[3:13], sep = "_")
+colnames(pivot_station_pressure)[3:13] <- paste("station_pressure_month", colnames(pivot_station_pressure)[3:13], sep = "_")
+colnames(pivot_dewpoint)[3:13] <- paste("dewpoint_month", colnames(pivot_dewpoint)[3:13], sep = "_")
+
+weather_month = merge(merge(merge(merge(merge(merge(pivot_min_temp, pivot_max_temp, by=c("County","State"),all = TRUE), 
+                                                    pivot_mean_temp, by=c("County","State"),all = TRUE), 
+                                              pivot_wind_speed, by=c("County","State"),all = TRUE), 
+                                        pivot_precipitation, by=c("County","State"),all = TRUE), 
+                                  pivot_station_pressure, by=c("County","State"),all = TRUE), 
+                            pivot_dewpoint, by=c("County","State"),all = TRUE)
+
+fwrite(weather_month, "weather_all_month.csv")
+
+
+#Since month=1 and month=2 are empty for most of the attributes and counties, we decided to remove them for now.
+weather_month <- weather_month %>% select(-contains("month_1"))
+weather_month <- weather_month %>% select(-contains("month_2"))
+
+# 0 values mean that we do not have data for that county and for that month. So, we replace them with NaN values.
+weather_month[weather_month == 0] = NA
+
+fwrite(weather_month, "weather_month3to11.csv")
+
+#Check if it contains any missing values
+(sum(!complete.cases(weather_month)))
+
+```
+
+
+#Covid_by_month
+
+```{r Aggregate covid data for each month}
+
+covid_by_month = arrange(covid_by_month , County, State, date, month)
+
+cases = covid_by_month %>% group_by(County, State, month) %>% summarise(cases = max(cases,na.rm = TRUE),.groups='drop')
+deaths = covid_by_month %>% group_by(County, State, month) %>% summarise(deaths = max(deaths,na.rm = TRUE),.groups='drop')
+
+for (i in 2:dim(cases)[1]) {
+  if (cases$County[i] == cases$County[i-1] && cases$State[i] == cases$State[i-1]) {
+    cases$cases[i]=cases$cases[i]-cases$cases[i-1]
+  }
+}
+
+for (i in 2:dim(deaths)[1]) {
+  if (deaths$County[i] == deaths$County[i-1] && deaths$State[i] == deaths$State[i-1]) {
+    deaths$deaths[i]=deaths$deaths[i]-deaths$deaths[i-1]
+  }
+}
+
+pivot_cases = dcast(cases, County + State ~ month, fun.aggregate = sum, value.var='cases')
+pivot_deaths = dcast(deaths, County + State ~ month, fun.aggregate = sum, value.var='deaths')
+
+colnames(pivot_cases)[3:13] <- paste("pivot_cases_month", colnames(pivot_cases)[3:13], sep = "_")
+colnames(pivot_deaths)[3:13] <- paste("pivot_deaths_month", colnames(pivot_deaths)[3:13], sep = "_")
+
+#Remove all negative values for death rates
+pivot_deaths[pivot_deaths<0] = 0
+
+
+covid_month = merge(pivot_cases, pivot_deaths, by=c("County","State"),all = TRUE)
+
+fwrite(covid_month, "covid_allmonths.csv")
+
+#Since month=1 and month=2 are empty for most of the attributes and counties, we decided to remove them for now.
+covid_month <- covid_month %>% select(-contains("month_1"))
+covid_month <- covid_month %>% select(-contains("month_2"))
+
+fwrite(covid_month, "covid_month3to11.csv")
+
+#Check if it contains any missing values
+(sum(!complete.cases(covid_month)))
+
+```
+
+
+
+#Demographic data
+Since Covid has higher effects on older people, the demographic data is divided into two groups of people: older ones and young ones.
+It seems that, based on the literature and news, white and non-white race might have an impact on Covid positive rates and death rates. So, they are also imported to our datasets.
+Finally, all data cleaned so far is merged in a table based on the mutual state and county names.
+
+```{r}
+elder_pop <- tot_pop_data %>% group_by(County, State) %>% filter(AGEGRP >= 14) %>% summarise(Elderly_pop = sum(TOT_POP),.groups='drop')
+yonger_pop <- tot_pop_data %>% group_by(County, State) %>% filter(AGEGRP < 14 & AGEGRP > 0) %>% summarise(Young_pop = sum(TOT_POP),.groups='drop')
+
+race_pop <- tot_pop_data %>% group_by(County, State) %>% filter(AGEGRP == 0) %>% select(WHITE, NON_WHITE, County, State)
+
+population_data = merge(elder_pop, yonger_pop, by = c("County", "State"), all.x = TRUE)
+population_data = merge(population_data, race_pop, by = c("County", "State"), all.x = TRUE)
+population_data = merge(covid_by_county, population_data, by = c("County", "State"), all.x = TRUE)
+merged_covid_data = merge(population_data, icu_beds_by_county, by = c("County", "State"), all.x = TRUE)
+merged_covid_data = merge(merged_covid_data, health_data, by = c("County", "State"), all.x = TRUE)
+```
+
+#Clean the Data
+Some demographic data belonged to some counties is missed in the current datasets. So, by searching on the websites, they have been found and assigned to the missing values.
+For the other missing values, such as "twentieth_percentile_income" which the team could not find the real values, the missing values is imputed using the average values of the state of that county.
+Some new attributes including "Total Population", "Population Density", "Positive Case Rates", and "Death Rates" are also defined and added to the final dataset.
+
+```{r}
+
+ind_Kansas_City = which(merged_covid_data$State == "Missouri" & merged_covid_data$County == "Kansas City")
+ind_Falls_Church = which(merged_covid_data$State == "Virginia" & merged_covid_data$County == "Falls Church")
+ind_Rio_Arriba = which(merged_covid_data$State == "New Mexico" & merged_covid_data$County == "Rio Arriba")
+
+merged_covid_data[ind_Kansas_City, ]$Elderly_pop = 150153
+merged_covid_data[ind_Kansas_City, ]$Young_pop = 962919
+merged_covid_data[ind_Kansas_City, ]$WHITE = 810026
+merged_covid_data[ind_Kansas_City, ]$NON_WHITE = 303046
+
+merged_covid_data[ind_Falls_Church, ]$twentieth_percentile_income = (merged_covid_data %>% filter(State == "Virginia" & County != "Falls Church") %>% summarise(Mean = mean(twentieth_percentile_income)))[1,1]
+
+merged_covid_data[ind_Falls_Church, ]$eightieth_percentile_income = (merged_covid_data %>% filter(State == "Virginia" & County != "Falls Church") %>% summarise(Mean = mean(eightieth_percentile_income)))[1,1]
+
+merged_covid_data[ind_Rio_Arriba, ]$twentieth_percentile_income = (merged_covid_data %>% filter(State == "New Mexico" & County != "Rio Arriba") %>% summarise(Mean = mean(twentieth_percentile_income)))[1,1]
+
+merged_covid_data[ind_Rio_Arriba, ]$eightieth_percentile_income = (merged_covid_data %>% filter(State == "New Mexico" & County != "Rio Arriba") %>% summarise(Mean = mean(eightieth_percentile_income)))[1,1]
+
+
+merged_covid_data$POP_TOTAL <- merged_covid_data$WHITE + merged_covid_data$NON_WHITE
+merged_covid_data$POP_DENSITY <- merged_covid_data$POP_TOTAL / merged_covid_data$area_sqmi
+merged_covid_data$Positive_Case_Rate <- merged_covid_data$Positive_Cases / merged_covid_data$POP_TOTAL
+merged_covid_data$Death_Rate <- merged_covid_data$Deaths / merged_covid_data$POP_TOTAL
+
+
+merged_covid_data["NUM_STAFFED_BEDS"][is.na(merged_covid_data["NUM_STAFFED_BEDS"])] = 0
+merged_covid_data["NUM_ICU_BEDS"][is.na(merged_covid_data["NUM_ICU_BEDS"])] = 0
+
+final_data = merged_covid_data
+```
+
+#Merge with weather data
+
+```{r }
+
+final_data = merge(final_data, weather_month, by=c("County","State") , all.x = TRUE)
+
+```
+
+#Impute weather data
+
+```{r }
+
+# We impute the null values with the average of that month for the total state
+for (col in colnames(final_data)) {
+  for (i in 1:dim(final_data)[1]) {
+    if (is.na(final_data[i,col])){
+      New_Data = final_data %>% filter(State == final_data$State[i] & County !=final_data$County[i])
+      New_Data1=na.omit(New_Data[,col])
+      final_data[i,col] = mean(New_Data1)
+    } 
+  }
+  }
+
+# We impute the District of Columbia missing values with the data for Arlington, Virginia County: precipitation, pressure and dewpoint
+
+final_data$precipitation_month_3[788] = final_data$precipitation_month_3[84]
+final_data$precipitation_month_4[788] = final_data$precipitation_month_4[84]
+final_data$precipitation_month_5[788] = final_data$precipitation_month_5[84]
+final_data$precipitation_month_6[788] = final_data$precipitation_month_6[84]
+final_data$precipitation_month_7[788] = final_data$precipitation_month_7[84]
+final_data$precipitation_month_8[788] = final_data$precipitation_month_8[84]
+final_data$precipitation_month_9[788] = final_data$precipitation_month_9[84]
+final_data$precipitation_month_10[788] = final_data$precipitation_month_10[84]
+final_data$precipitation_month_11[788] = final_data$precipitation_month_11[84]
+
+final_data$station_pressure_month_3[788] = final_data$station_pressure_month_3[84]
+final_data$station_pressure_month_4[788] = final_data$station_pressure_month_4[84]
+final_data$station_pressure_month_5[788] = final_data$station_pressure_month_5[84]
+final_data$station_pressure_month_6[788] = final_data$station_pressure_month_6[84]
+final_data$station_pressure_month_7[788] = final_data$station_pressure_month_7[84]
+final_data$station_pressure_month_8[788] = final_data$station_pressure_month_8[84]
+final_data$station_pressure_month_9[788] = final_data$station_pressure_month_9[84]
+final_data$station_pressure_month_10[788] = final_data$station_pressure_month_10[84]
+final_data$station_pressure_month_11[788] = final_data$station_pressure_month_11[84]
+
+final_data$dewpoint_month_3[788] = final_data$dewpoint_month_3[84]
+final_data$dewpoint_month_4[788] = final_data$dewpoint_month_4[84]
+final_data$dewpoint_month_5[788] = final_data$dewpoint_month_5[84]
+final_data$dewpoint_month_6[788] = final_data$dewpoint_month_6[84]
+final_data$dewpoint_month_7[788] = final_data$dewpoint_month_7[84]
+final_data$dewpoint_month_8[788] = final_data$dewpoint_month_8[84]
+final_data$dewpoint_month_9[788] = final_data$dewpoint_month_9[84]
+final_data$dewpoint_month_10[788] = final_data$dewpoint_month_10[84]
+final_data$dewpoint_month_11[788] = final_data$dewpoint_month_11[84]
+
+```
+
+
+#Plot Missing Data
+
+```{r }
+
+ggplot_missing(final_data)
+
+```
+final_data[rowSums(is.na(final_data)) > 0, ]
+
+
+#Merge with covid by month data
+
+```{r }
+
+final_data = merge(final_data, covid_month, by=c("County","State") , all.x = TRUE)
+
+```
+
+
+#Plot Missing Data
+
+```{r }
+
+ggplot_missing(final_data)
+
+```
+
+
+#Save the file
+
+```{r save_data}
+fwrite(final_data, "Final_Covid_Data_try.csv")
+```
+
+#Normalize the Covid data to be prepared for the clustering analysis
+
+```{r normalize data}
+final_data$Positive_Case_Rate_NORM = scale(final_data$Positive_Case_Rate)
+final_data$Death_Rate_NORM = scale(final_data$Death_Rate)
+```
+
+#Clustering analysis with K=3 and K=5
+
+```{r clustering}
+clustered_data_3 = kmeans(cbind(final_data$Positive_Case_Rate_NORM, final_data$Death_Rate_NORM), 3, iter.max = 10, nstart = 1)
+clustered_data_5 = kmeans(cbind(final_data$Positive_Case_Rate_NORM, final_data$Death_Rate_NORM), 5, iter.max = 10, nstart = 1)
+
+final_data$cluster_3 = clustered_data_3$cluster
+final_data$cluster_5 = clustered_data_5$cluster
+```
+
+#Visualize the clustering results
+
+```{r visualize clusters With NewYork}
+
+ggplot(data = final_data, aes(x=Positive_Case_Rate, y=Death_Rate, colour = factor(cluster_3))) + geom_point()
+ggplot(data = final_data, aes(x=Positive_Case_Rate, y=Death_Rate, colour = factor(cluster_5))) + geom_point()
+```
+
+#Visualize clustering results w/o the State of New York 
+
+```{r visualize clusters Without Newyork}
+
+final_data_wo_ny <- final_data %>% filter(County != "New York")
+
+ggplot(data = final_data_wo_ny, aes(x=Positive_Case_Rate, y=Death_Rate, colour = factor(cluster_3))) + geom_point()
+ggplot(data = final_data_wo_ny, aes(x=Positive_Case_Rate, y=Death_Rate, colour = factor(cluster_5))) + geom_point()
+```
+
+#check if Newyork is an outlier based on the Positive case rate and death case rate
+
+```{r}
+
+boxplot(final_data$Positive_Case_Rate)
+boxplot(final_data$Death_Rate)
+
+```
+
+
+
+
+
+
+
+
+
+
+
