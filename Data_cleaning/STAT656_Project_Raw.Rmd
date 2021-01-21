@@ -1,0 +1,93 @@
+---
+title: "STAT656_Project"
+author: "Moein-Samira-Homa"
+date: "10/8/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(dplyr)
+library(ggplot2)
+library(caret)
+library(statsr)
+library(data.table)
+library(stats)
+library(openintro)
+```
+
+#Read the data
+
+```{r load data}
+rm(list = ls())
+covid_data = fread("/Volumes/GoogleDrive/Shared drives/STAT656_Project/Raw_Data/COVID_by_County_Raw.csv")
+icu_data = fread("/Volumes/GoogleDrive/Shared drives/STAT656_Project/Raw_Data/ICU_bed_by_county_Raw.csv")
+tot_pop_data = fread("/Volumes/GoogleDrive/Shared drives/STAT656_Project/Raw_Data/POP_Data_Race_Raw.csv")
+health_data = fread("/Volumes/GoogleDrive/Shared drives/STAT656_Project/Raw_Data/us_county_sociohealth_data_Raw.csv")
+```
+
+#Extract Positive case rates and death case rates
+
+```{r filter_covid}
+covid_by_county <- covid_data %>% group_by(County, State) %>% summarise(Positive_Cases = max(Cases), Deaths = max(Deaths))
+```
+
+#Demographic data
+Since Covid has higher effects on older people, the demographic data is divided into two groups of people: older ones and young ones.
+It seems that, based on the literature and news, white and non-white race might have an impact on Covid positive rates and death rates. So, they are also imported to our datasets.
+Finally, all data cleaned so far is merged in a table based on the mutual state and county names.
+
+```{r}
+elder_pop <- tot_pop_data %>% group_by(County, State) %>% filter(AGEGRP >= 14) %>% summarise(Elderly_pop = sum(TOT_POP))
+yonger_pop <- tot_pop_data %>% group_by(County, State) %>% filter(AGEGRP < 14 & AGEGRP > 0) %>% summarise(Young_pop = sum(TOT_POP))
+
+race_pop <- tot_pop_data %>% group_by(County, State) %>% filter(AGEGRP == 0) %>% select(WHITE, NON_WHITE, County, State)
+
+population_data = merge(elder_pop, yonger_pop, by = c("County", "State"), all.x = TRUE)
+population_data = merge(population_data, race_pop, by = c("County", "State"), all.x = TRUE)
+population_data = merge(covid_by_county, population_data, by = c("County", "State"), all.x = TRUE)
+merged_covid_data = merge(population_data, icu_data, by = c("County", "State"), all.x = TRUE)
+merged_covid_data = merge(merged_covid_data, health_data, by = c("County", "State"), all.x = TRUE)
+```
+
+Finally, all data cleaned so far is merged in a table based on the mutual state and county names.
+
+```{r}
+
+merged_covid_data$POP_TOTAL <- merged_covid_data$WHITE + merged_covid_data$NON_WHITE
+merged_covid_data$POP_DENSITY <- merged_covid_data$POP_TOTAL / merged_covid_data$area_sqmi
+merged_covid_data$Positive_Case_Rate <- merged_covid_data$Positive_Cases / merged_covid_data$POP_TOTAL
+merged_covid_data$Death_Rate <- merged_covid_data$Deaths / merged_covid_data$POP_TOTAL
+
+final_data = merged_covid_data
+```
+
+#Plot Missing Data
+
+```{r plot_missing_values}
+ggplot_missing <- function(x){
+  require(reshape2)
+  require(ggplot2)
+  x %>% 
+    is.na %>%
+    melt %>%
+    ggplot(data = .,
+           aes(x = Var2,
+               y = Var1)) +
+    geom_raster(aes(fill = value)) +
+    scale_fill_grey(name = "",
+                    labels = c("Present","Missing")) +
+    theme_minimal() + 
+    theme(axis.text.x  = element_text(angle=45, vjust=0.5)) + 
+    labs(x = "Variables in Dataset",
+         y = "Rows / observations")
+}
+
+ggplot_missing(final_data)
+```
+
+#Save the file
+
+```{r save_data}
+fwrite(final_data, "Final_Covid_Data_Raw.csv")
+```
+
