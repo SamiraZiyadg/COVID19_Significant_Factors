@@ -1,0 +1,221 @@
+---
+title: "STAT656_Project"
+author: "Moein-Samira-Homa"
+date: "10/8/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(dplyr)
+library(ggplot2)
+library(caret)
+library(statsr)
+library(data.table)
+library(stats)
+library(openintro)
+library(pivottabler)
+library(corrplot)
+library(reshape)
+library(e1071)
+library(glmnet)
+library(AppliedPredictiveModeling)
+
+```
+
+
+#Read the Data
+We first read the data includes covid data, ICU data, demographic data, geographic data, and health data.
+
+```{r load data}
+
+setwd("~/R/final project")
+rm(list = ls())
+final_data = fread("Final-Covid.csv")
+```
+
+#Plot Missing Data
+
+```{r plot_missing_values}
+ggplot_missing <- function(x){
+  require(reshape2)
+  require(ggplot2)
+  x %>% 
+    is.na %>%
+    melt %>%
+    ggplot(data = .,
+           aes(x = Var2,
+               y = Var1)) +
+    geom_raster(aes(fill = value)) +
+    scale_fill_grey(name = "",
+                    labels = c("Present","Missing")) +
+    theme_minimal() + 
+    theme(axis.text.x  = element_text(angle=45, vjust=0.5)) + 
+    labs(x = "Variables in Dataset",
+         y = "Rows / observations")
+}
+
+ggplot_missing(final_data)
+
+#Calculate the NAN counts and NAN percentage for each column
+
+colMeans(is.na(final_data))
+
+```
+
+#Normalize the Covid data to be prepared for the clustering analysis
+
+```{r normalize data}
+final_data$Positive_Case_Rate_NORM = scale(final_data$Positive_Case_Rate)
+final_data$Death_Rate_NORM = scale(final_data$Death_Rate)
+```
+
+#Clustering analysis with K=3 and K=5
+
+```{r clustering}
+clustered_data_3 = kmeans(cbind(final_data$Positive_Case_Rate_NORM, final_data$Death_Rate_NORM), 3, iter.max = 10, nstart = 1)
+clustered_data_5 = kmeans(cbind(final_data$Positive_Case_Rate_NORM, final_data$Death_Rate_NORM), 5, iter.max = 10, nstart = 1)
+
+final_data$cluster_3 = clustered_data_3$cluster
+final_data$cluster_5 = clustered_data_5$cluster
+```
+
+#Visualize the clustering results
+
+```{r visualize clusters With NewYork}
+
+ggplot(data = final_data, aes(x=Positive_Case_Rate, y=Death_Rate, colour = factor(cluster_3))) + geom_point()
+ggplot(data = final_data, aes(x=Positive_Case_Rate, y=Death_Rate, colour = factor(cluster_5))) + geom_point()
+```
+
+#Visualize clustering results w/o the State of New York 
+
+```{r visualize clusters Without Newyork}
+
+final_data_wo_ny <- final_data %>% filter(County != "New York")
+
+ggplot(data = final_data_wo_ny, aes(x=Positive_Case_Rate, y=Death_Rate, colour = factor(cluster_3))) + geom_point()
+ggplot(data = final_data_wo_ny, aes(x=Positive_Case_Rate, y=Death_Rate, colour = factor(cluster_5))) + geom_point()
+```
+
+#check if Newyork is an outlier based on the Positive case rate and death case rate
+
+```{r}
+
+boxplot(final_data$Positive_Case_Rate)
+boxplot(final_data$Death_Rate)
+
+
+```
+# Normalizing Data
+
+```{r multiple regression1}
+names(final_data)
+X <- model.matrix(Death_Rate ~ Elderly_pop+ Young_pop + WHITE+ NON_WHITE + NUM_STAFFED_BEDS + NUM_ICU_BEDS +lat +lon + percent_smokers + percent_adults_with_obesity + percent_uninsured + eightieth_percentile_income + twentieth_percentile_income + percent_adults_with_diabetes + percent_below_poverty + area_sqmi +percent_rural +POP_DENSITY+ min_temp + max_temp + mean_temp+ wind_speed +precipitation + station_pressure + dewpoint, data=final_data) [,-1]
+
+Y <- final_data$ Positive_Case_Rate
+Y2 <- final_data$ Death_Rate
+
+X= scale(X, center = TRUE, scale = TRUE)
+Y= scale(Y, center = TRUE, scale = TRUE)
+Y2= scale(Y2, center = TRUE, scale = TRUE)
+
+```
+#use multiple regression for model selection for Positive case rate as Y variable
+
+```{r multiple regression2}
+Lm_caserate<- lm (Y ~ X)
+                    
+summary (Lm_caserate)
+
+```
+
+#Multiple regression with death rate as Y variable
+
+```{r multiple regression death}
+Lm_deathrate<- lm (Y2 ~ X)
+                    
+summary (Lm_deathrate)
+
+```
+
+We need to choose good values of ‘lambda’. To do that, we will use K-fold CV to estimate the test error. We need to choose a value of K. This isn’t a crucial choice in most cases. However, given that we have a lot of features relative to the sample size, we do not want to be putting too few observations in the training set. Hence, we should pick a larger value of K (note that this becomes more computationally intensive as K increases).
+
+#Let’s correct for skewness as well.
+```{r Penalized Regression}
+final_data = final_data %>%
+  preProcess(method  = 'YeoJohnson') %>%
+  predict(newdata    = final_data)
+
+```
+
+#Check the correlation in feature
+
+```{r lm regression}
+
+Xcorr = cor(X[])
+corrplot(Xcorr,  method = "circle",  tl.cex = .70)
+
+```
+
+#Now, let’s fit the ridge model (for Positive Case rate as Y variable) and get the K-fold CV estimate of the test error for the grid of lambda values and directly compare it to the least squares solution:
+```{r ridge regression-case}
+X <- model.matrix(Y ~ X, data=final_data) [,-1]
+grid <- 10^ seq (10,-2, length =100)
+ridge.mod <- glmnet(X, Y ,alpha =0, lambda =grid)
+plot(ridge.mod)
+```
+
+
+```{r Ridge regression case 2}
+
+cv.out <- cv.glmnet(X,Y,alpha =0)
+plot(cv.out)
+
+
+
+```
+
+# Coefficients of parameters, ridge regression for Positive Case rate as Y variable
+
+```{r case coefficients}
+
+bestlam <- cv.out$lambda.min
+
+ridge.coef <- predict (ridge.mod,type ="coefficients",s=bestlam )[1:25,]
+ridge.coef[ridge.coef !=0]
+
+```
+#Now, let’s fit the ridge model (for Death rate as Y variable) and get the K-fold CV estimate of the test error for the grid of lambda values and directly compare it to the least squares solution:
+
+```{r ridge regression-death}
+X <- model.matrix(Y2~ X) [,-1]
+
+grid <- 10^ seq (10,-2, length =100)
+ridge.mod <- glmnet(X, Y2 ,alpha =0, lambda =grid)
+plot(ridge.mod)
+```
+
+
+```{r Ridge regression death 2}
+
+cv.out <- cv.glmnet(X,Y2,alpha =0)
+plot(cv.out)
+
+```
+
+# Coefficients of parameters, ridge regression for death rate as Y variable
+
+```{r death coefficients}
+
+bestlam <- cv.out$lambda.min
+
+ridge.coef <- predict (ridge.mod,type ="coefficients",s=bestlam )[1:25,]
+ridge.coef[ridge.coef !=0]
+
+```
+
+
+
+
+
+
